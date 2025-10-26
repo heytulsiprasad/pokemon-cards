@@ -10,13 +10,86 @@ function getIdFromUrl(url: string): number {
   return m ? Number(m[1]) : 0;
 }
 
-function toCardList(list: PokemonListResponse | null): PokemonCard[] {
+function toDisplayName(value: string): string {
+  return value
+    .replace(/-/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+async function toCardList(list: PokemonListResponse | null): Promise<PokemonCard[]> {
   if (!list) return [];
-  return list.results.map((r) => {
-    const id = getIdFromUrl(r.url);
-    const image = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
-    return { id, name: r.name, image };
-  });
+
+  const cards = await Promise.all(
+    list.results.map(async (r) => {
+      const id = getIdFromUrl(r.url);
+      const image = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
+
+      try {
+        const [pokemon, species] = await Promise.all([
+          pokemonApiClient.getPokemon(id),
+          pokemonApiClient.getPokemonSpecies(id).catch(() => null),
+        ]);
+
+        const statsMap = pokemon.stats.reduce<Record<string, number>>((acc, stat) => {
+          acc[stat.stat.name] = stat.base_stat;
+          return acc;
+        }, {});
+
+        const englishFlavor = species?.flavor_text_entries.find((entry) => entry.language.name === 'en');
+        const cleanedFlavor = englishFlavor?.flavor_text
+          ? englishFlavor.flavor_text.replace(/\f|\n/g, ' ').replace(/\s+/g, ' ').trim()
+          : null;
+
+        const genus = species?.genera.find((entry) => entry.language.name === 'en')?.genus ?? null;
+
+        return {
+          id,
+          name: r.name,
+          image,
+          types: pokemon.types.map((t) => t.type.name),
+          height: pokemon.height ? pokemon.height / 10 : null,
+          weight: pokemon.weight ? pokemon.weight / 10 : null,
+          abilities: pokemon.abilities
+            .sort((a, b) => a.slot - b.slot)
+            .slice(0, 3)
+            .map((ability) => toDisplayName(ability.ability.name)),
+          category: genus,
+          flavorText: cleanedFlavor,
+          stats: {
+            hp: statsMap.hp ?? null,
+            attack: statsMap.attack ?? null,
+            defense: statsMap.defense ?? null,
+            specialAttack: statsMap['special-attack'] ?? null,
+            specialDefense: statsMap['special-defense'] ?? null,
+            speed: statsMap.speed ?? null,
+          },
+        } satisfies PokemonCard;
+      } catch (error) {
+        console.error(`Failed to hydrate Pokémon card ${id}`, error);
+        return {
+          id,
+          name: r.name,
+          image,
+          types: [],
+          height: null,
+          weight: null,
+          abilities: [],
+          category: null,
+          flavorText: null,
+          stats: {
+            hp: null,
+            attack: null,
+            defense: null,
+            specialAttack: null,
+            specialDefense: null,
+            speed: null,
+          },
+        } satisfies PokemonCard;
+      }
+    })
+  );
+
+  return cards;
 }
 
 export default function Home() {
@@ -26,12 +99,12 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const LIMIT = 50;
+  const LIMIT = 20;
   const hasMore = useMemo(() => (list ? cards.length < list.count : true), [cards.length, list]);
 
   useEffect(() => {
     // initial
-    loadMore();
+    void loadMore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -41,7 +114,7 @@ export default function Home() {
       setLoading(true);
       const data = await pokemonApiClient.getPokemonList(LIMIT, offset);
       setList((prev) => (prev ? { ...data, results: [...prev.results, ...data.results] } : data));
-      const newCards = toCardList(data);
+      const newCards = await toCardList(data);
       setCards((prev) => [...prev, ...newCards]);
       setOffset((prev) => prev + LIMIT);
     } catch (err) {
