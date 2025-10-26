@@ -1,65 +1,93 @@
-import Image from "next/image";
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import pokemonApiClient from '@/lib/pokemon-api';
+import type { PokemonListResponse } from '@/types/pokemon';
+import PokemonSwipeDeck, { type PokemonCard } from '@/components/PokemonSwipeDeck';
+
+function getIdFromUrl(url: string): number {
+  const m = url.match(/\/pokemon\/(\d+)\/?$/);
+  return m ? Number(m[1]) : 0;
+}
+
+function toCardList(list: PokemonListResponse | null): PokemonCard[] {
+  if (!list) return [];
+  return list.results.map((r) => {
+    const id = getIdFromUrl(r.url);
+    const image = `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`;
+    return { id, name: r.name, image };
+  });
+}
 
 export default function Home() {
+  const [offset, setOffset] = useState(0);
+  const [list, setList] = useState<PokemonListResponse | null>(null);
+  const [cards, setCards] = useState<PokemonCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const LIMIT = 50;
+  const hasMore = useMemo(() => (list ? cards.length < list.count : true), [cards.length, list]);
+
+  useEffect(() => {
+    // initial
+    loadMore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadMore = async () => {
+    if (!hasMore && offset !== 0) return;
+    try {
+      setLoading(true);
+      const data = await pokemonApiClient.getPokemonList(LIMIT, offset);
+      setList((prev) => (prev ? { ...data, results: [...prev.results, ...data.results] } : data));
+      const newCards = toCardList(data);
+      setCards((prev) => [...prev, ...newCards]);
+      setOffset((prev) => prev + LIMIT);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to fetch Pokémon list');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="min-h-screen bg-gray-50 py-10">
+      <div className="max-w-5xl mx-auto px-4">
+        <header className="text-center mb-10">
+          <h1 className="text-5xl font-black tracking-tight bg-gradient-to-r from-indigo-600 via-pink-600 to-orange-500 bg-clip-text text-transparent">
+            PokéDeck
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
+          <p className="text-gray-600 mt-2">Swipe through all Pokémon — powered by @learningpad/api-client</p>
+        </header>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
+            {error}
+          </div>
+        )}
+
+        <div className="flex flex-col items-center">
+          {loading && cards.length === 0 ? (
+            <div className="text-center py-16">
+              <div className="inline-block animate-spin rounded-full h-10 w-10 border-2 border-b-transparent border-indigo-600"></div>
+              <p className="mt-3 text-gray-600">Loading PokéDeck…</p>
+            </div>
+          ) : (
+            <PokemonSwipeDeck
+              items={cards}
+              onDepleted={() => {
+                if (hasMore) loadMore();
+              }}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          )}
+
+          {!loading && !hasMore && (
+            <p className="mt-8 text-gray-500">You’ve reached the end of the Pokédex.</p>
+          )}
         </div>
-      </main>
+      </div>
     </div>
   );
 }
